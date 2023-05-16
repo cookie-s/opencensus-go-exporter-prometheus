@@ -78,10 +78,13 @@ var _ http.Handler = (*Exporter)(nil)
 
 // ensureRegisteredOnce invokes reg.Register on the collector itself
 // exactly once to ensure that we don't get errors such as
-//  cannot register the collector: descriptor Desc{fqName: *}
-//  already exists with the same fully-qualified name and const label values
+//
+//	cannot register the collector: descriptor Desc{fqName: *}
+//	already exists with the same fully-qualified name and const label values
+//
 // which is documented by Prometheus at
-//  https://github.com/prometheus/client_golang/blob/fcc130e101e76c5d303513d0e28f4b6d732845c7/prometheus/registry.go#L89-L101
+//
+//	https://github.com/prometheus/client_golang/blob/fcc130e101e76c5d303513d0e28f4b6d732845c7/prometheus/registry.go#L89-L101
 func (c *collector) ensureRegisteredOnce() {
 	c.registerOnce.Do(func() {
 		if err := c.reg.Register(c); err != nil {
@@ -243,7 +246,11 @@ func toPromMetric(
 		if err != nil {
 			return nil, err
 		}
-		return prometheus.NewConstMetric(desc, prometheus.CounterValue, pv, labelValues...)
+		exemplar := prometheus.Exemplar{
+			Value:  100,
+			Labels: map[string]string{"hoge": "fuga"},
+		}
+		return prometheus.MustNewMetricWithExemplars(prometheus.MustNewConstMetric(desc, prometheus.CounterValue, pv, labelValues...), exemplar), nil
 
 	case metricdata.TypeGaugeFloat64, metricdata.TypeGaugeInt64:
 		pv, err := toPromValue(point)
@@ -255,6 +262,7 @@ func toPromMetric(
 	case metricdata.TypeCumulativeDistribution:
 		switch v := point.Value.(type) {
 		case *metricdata.Distribution:
+			var exemplars []prometheus.Exemplar
 			points := make(map[float64]uint64)
 			// Histograms are cumulative in Prometheus.
 			// Get cumulative bucket counts.
@@ -262,8 +270,15 @@ func toPromMetric(
 			for i, b := range v.BucketOptions.Bounds {
 				cumCount += uint64(v.Buckets[i].Count)
 				points[b] = cumCount
+				if len(v.Buckets[i].Exemplar.Attachments) > 0 {
+					panic(v.Buckets[i].Exemplar.Attachments)
+				}
+				exemplars = append(exemplars, prometheus.Exemplar{
+					Value:  v.Buckets[i].Exemplar.Value,
+					Labels: map[string]string{"hoge": "piyo"},
+				})
 			}
-			return prometheus.NewConstHistogram(desc, uint64(v.Count), v.Sum, points, labelValues...)
+			return prometheus.MustNewMetricWithExemplars(prometheus.MustNewConstHistogram(desc, uint64(v.Count), v.Sum, points, labelValues...), exemplars...), nil
 		default:
 			return nil, typeMismatchError(point)
 		}
